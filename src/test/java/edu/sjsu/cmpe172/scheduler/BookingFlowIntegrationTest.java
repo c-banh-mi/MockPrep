@@ -10,7 +10,6 @@ import java.time.LocalDateTime;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,7 +29,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
     }
 
     private long book(String username, long slotId) throws Exception {
-        String body = mvc.perform(post("/api/customer/appointments").with(as(username)).with(csrf())
+        String body = mvc.perform(post("/api/customer/appointments").with(as(username))
                         .contentType(MediaType.APPLICATION_JSON).content(bookingBody(slotId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("BOOKED"))
@@ -57,7 +56,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
         long slotId = openSlotId("alice.mentor", "Mock Coding Interview");
         book("jordan.dev", slotId);
 
-        mvc.perform(post("/api/customer/appointments").with(as("sam.dev")).with(csrf())
+        mvc.perform(post("/api/customer/appointments").with(as("sam.dev"))
                         .contentType(MediaType.APPLICATION_JSON).content(bookingBody(slotId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
@@ -66,16 +65,16 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
 
     @Test
     void invalidBookingInputIs400AndUnknownSlotIs404() throws Exception {
-        mvc.perform(post("/api/customer/appointments").with(as("sam.dev")).with(csrf())
+        mvc.perform(post("/api/customer/appointments").with(as("sam.dev"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"notes\": \"no slot\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("serviceId: must not be null; slotId: must not be null"));
 
-        mvc.perform(post("/api/customer/appointments").with(as("sam.dev")).with(csrf())
+        mvc.perform(post("/api/customer/appointments").with(as("sam.dev"))
                         .contentType(MediaType.APPLICATION_JSON).content("{not json"))
                 .andExpect(status().isBadRequest());
 
-        mvc.perform(post("/api/customer/appointments").with(as("sam.dev")).with(csrf())
+        mvc.perform(post("/api/customer/appointments").with(as("sam.dev"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"slotId\": 99999, \"serviceId\": 1}"))
                 .andExpect(status().isNotFound());
     }
@@ -85,10 +84,10 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
         long slotId = openSlotId("raj.mentor", "Mock System Design");
         long apptId = book("jordan.dev", slotId);
 
-        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("sam.dev")).with(csrf()))
+        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("sam.dev")))
                 .andExpect(status().isForbidden());
 
-        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("jordan.dev")).with(csrf()))
+        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("jordan.dev")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELLED"));
 
@@ -98,7 +97,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$[0].status").value("CANCELLED"));
 
         // Cancelling twice is a conflict; the freed slot can be booked again.
-        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("jordan.dev")).with(csrf()))
+        mvc.perform(post("/api/customer/appointments/{id}/cancel", apptId).with(as("jordan.dev")))
                 .andExpect(status().isConflict());
         book("sam.dev", slotId);
     }
@@ -106,7 +105,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
     @Test
     void providerCreatesListsAndRemovesSlot() throws Exception {
         LocalDateTime start = LocalDateTime.now().plusDays(10).withHour(8).withMinute(0).withSecond(0).withNano(0);
-        String body = mvc.perform(post("/api/provider/slots").with(as("alice.mentor")).with(csrf())
+        String body = mvc.perform(post("/api/provider/slots").with(as("alice.mentor"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"serviceId\": 1, \"startTime\": \"" + start + "\"}"))
                 .andExpect(status().isCreated())
@@ -119,14 +118,14 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$[*].id", hasItem((int) slotId)));
 
         // Same start again overlaps: 409. Another provider removing it: 403.
-        mvc.perform(post("/api/provider/slots").with(as("alice.mentor")).with(csrf())
+        mvc.perform(post("/api/provider/slots").with(as("alice.mentor"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"serviceId\": 1, \"startTime\": \"" + start + "\"}"))
                 .andExpect(status().isConflict());
-        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("raj.mentor")).with(csrf()))
+        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("raj.mentor")))
                 .andExpect(status().isForbidden());
 
-        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("alice.mentor")).with(csrf()))
+        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("alice.mentor")))
                 .andExpect(status().isNoContent());
         mvc.perform(get("/api/provider/slots").with(as("alice.mentor")))
                 .andExpect(jsonPath("$[*].id", not(hasItem((int) slotId))));
@@ -134,7 +133,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
 
     @Test
     void providerCannotCreateSlotInThePast() throws Exception {
-        mvc.perform(post("/api/provider/slots").with(as("alice.mentor")).with(csrf())
+        mvc.perform(post("/api/provider/slots").with(as("alice.mentor"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"serviceId\": 1, \"startTime\": \"2020-01-01T09:00:00\"}"))
                 .andExpect(status().isBadRequest());
@@ -145,7 +144,7 @@ class BookingFlowIntegrationTest extends IntegrationTestBase {
         long slotId = openSlotId("alice.mentor", "Resume Review");
         book("jordan.dev", slotId);
 
-        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("alice.mentor")).with(csrf()))
+        mvc.perform(delete("/api/provider/slots/{id}", slotId).with(as("alice.mentor")))
                 .andExpect(status().isConflict());
     }
 

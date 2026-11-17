@@ -1,6 +1,6 @@
 spring:
   application:
-    name: interview-scheduler
+    name: mockprep
   datasource:
     # Credentials come from env vars (see .env.example). No secrets are committed.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/scheduler}
@@ -15,6 +15,35 @@ spring:
       mode: always
       schema-locations: classpath:schema.sql
       data-locations: classpath:seed.sql
+  ai:
+    # Milestone 4: Gemini through the Gemini Developer API (API-key mode). Only the api-key is set:
+    # setting project-id/location would switch Spring AI to Vertex AI, which rejects a free AI Studio key.
+    # No GEMINI_API_KEY -> AI auto-configuration is switched off (RuntimeDefaultsEnvironmentPostProcessor).
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:}
+        chat:
+          options:
+            model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+            temperature: 0.3
+        embedding:
+          api-key: ${GEMINI_API_KEY:}
+          text:
+            options:
+              model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-2}
+    # Gemini can answer 503 "high demand". Spring AI's default is 10 retries with 2 s x5 backoff (minutes);
+    # keep it short and fall back to a lighter model instead (see FallbackChatModel).
+    retry:
+      max-attempts: 2
+      backoff:
+        initial-interval: 1s
+        multiplier: 2
+        max-interval: 2s
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never   # the table is created by schema.sql (see there)
   task:
     execution:
       thread-name-prefix: notify-   # @Async notification threads show up as notify-1, notify-2 in logs
@@ -32,12 +61,37 @@ notification:
   # Default: the mock controller inside this same app (/mock-notify). Point it elsewhere to use
   # another notification service; the request DTO and the gateway interface stay the same.
   base-url: ${NOTIFICATION_BASE_URL:http://localhost:${local.server.port:${server.port}}/mock-notify}
+  # Sent as X-Api-Key; the notification service rejects calls without it. Blank = random per run.
+  api-key: ${NOTIFICATION_API_KEY:}
   connect-timeout: 1s
   read-timeout: 2s
-  max-attempts: 3          # right after the commit: 3 tries, waiting 200 ms then 400 ms
+  max-attempts: 3          # one burst: 3 tries, waiting 200 ms then 400 ms
   backoff: 200ms
-  redelivery-interval: PT30S   # NotificationRedeliveryJob re-sends parked notifications this often
-  max-redeliveries: 10
+  redelivery-interval: PT30S   # a row whose burst failed is tried again after this long
+  max-redeliveries: 10         # total attempts per outbox row before it becomes FAILED
+  relay-interval: PT5S         # NotificationRelay polls the outbox this often (safety net)
+
+# The mock notification service (a separate system that happens to run in this JVM).
+mock-notify:
+  enabled: ${MOCK_NOTIFY_ENABLED:true}
+  api-key: ${notification.api-key}
+
+# JWT login (Milestone 4). HS256 key: 32+ random bytes, base64. Blank = random per run.
+app:
+  jwt:
+    secret: ${JWT_SECRET:}
+    ttl: ${JWT_TTL:PT2H}
+  # Browser origins allowed to call the API directly (the Next.js dev server / a deployed frontend).
+  cors-origins: ${CORS_ORIGINS:http://localhost:3000}
+  ai:
+    # Tried in order when the primary model fails (overloaded / rate-limited); blank = no fallback.
+    fallback-model: ${GEMINI_FALLBACK_MODEL:gemini-3.1-flash-lite,gemini-3.8-flash}
+    # Agent 2: the autonomous reminder agent. Runs at minute 0 of every hour by default.
+    reminders:
+      enabled: ${AI_REMINDERS_ENABLED:true}
+      cron: ${AI_REMINDERS_CRON:0 0 * * * *}
+      lookahead: ${AI_REMINDERS_LOOKAHEAD:PT24H}   # remind about appointments starting within this window
+      max-per-run: 20
 
 management:
   endpoints:

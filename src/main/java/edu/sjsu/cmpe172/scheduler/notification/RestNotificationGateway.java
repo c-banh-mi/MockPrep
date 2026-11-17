@@ -20,6 +20,8 @@ import java.net.SocketTimeoutException;
 @Component
 public class RestNotificationGateway implements NotificationGateway {
 
+    public static final String API_KEY_HEADER = "X-Api-Key";
+
     private final RestClient http;
     private final Environment env;
 
@@ -37,6 +39,8 @@ public class RestNotificationGateway implements NotificationGateway {
             NotificationReceipt receipt = http.post()
                     .uri(baseUrl() + "/api/notifications")
                     .header("Idempotency-Key", request.idempotencyKey())
+                    // The notification service only accepts callers that hold its API key.
+                    .header(API_KEY_HEADER, env.getRequiredProperty("notification.api-key"))
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()

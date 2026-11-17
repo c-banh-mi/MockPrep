@@ -1,7 +1,7 @@
 package edu.sjsu.cmpe172.scheduler.controller;
 
-import edu.sjsu.cmpe172.scheduler.notification.PendingNotification;
-import edu.sjsu.cmpe172.scheduler.notification.PendingNotificationRepository;
+import edu.sjsu.cmpe172.scheduler.notification.OutboxMessage;
+import edu.sjsu.cmpe172.scheduler.notification.OutboxRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -27,11 +27,11 @@ public class HealthController {
     private static final Logger log = LoggerFactory.getLogger(HealthController.class);
 
     private final JdbcClient jdbc;
-    private final PendingNotificationRepository pending;
+    private final OutboxRepository outbox;
 
-    public HealthController(JdbcClient jdbc, PendingNotificationRepository pending) {
+    public HealthController(JdbcClient jdbc, OutboxRepository outbox) {
         this.jdbc = jdbc;
-        this.pending = pending;
+        this.outbox = outbox;
     }
 
     @GetMapping("/health")
@@ -47,10 +47,14 @@ public class HealthController {
             database.put("status", "UP");
             database.put("responseTimeMs", (System.nanoTime() - start) / 1_000_000);
 
-            int waiting = pending.countByStatus(PendingNotification.PENDING);
-            int failed = pending.countByStatus(PendingNotification.FAILED);
-            notifications.put("status", waiting + failed == 0 ? "UP" : "DEGRADED");
-            notifications.put("pending", waiting);
+            // pending = not delivered yet; retrying = already failed at least once; failed = given up.
+            // A row queued a moment ago and not tried yet is normal, so only retrying/failed degrade.
+            int pending = outbox.countByStatus(OutboxMessage.PENDING);
+            int retrying = outbox.countWaitingForRetry();
+            int failed = outbox.countByStatus(OutboxMessage.FAILED);
+            notifications.put("status", retrying + failed == 0 ? "UP" : "DEGRADED");
+            notifications.put("pending", pending);
+            notifications.put("retrying", retrying);
             notifications.put("failed", failed);
         } catch (DataAccessException e) {
             dbUp = false;

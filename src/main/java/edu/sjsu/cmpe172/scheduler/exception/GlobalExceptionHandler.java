@@ -1,5 +1,6 @@
 package edu.sjsu.cmpe172.scheduler.exception;
 
+import edu.sjsu.cmpe172.scheduler.ai.AiUnavailableException;
 import edu.sjsu.cmpe172.scheduler.dto.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -56,6 +57,23 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ErrorResponse> conflict(ConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), req);
+    }
+
+    /** The LLM is not configured or did not answer. The rest of the app keeps working. */
+    @ExceptionHandler(AiUnavailableException.class)
+    public ResponseEntity<ErrorResponse> aiUnavailable(AiUnavailableException ex, HttpServletRequest req) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(edu.sjsu.cmpe172.scheduler.ai.AiRateLimiter.AiRateLimitException.class)
+    public ResponseEntity<ErrorResponse> tooManyRequests(RuntimeException ex, HttpServletRequest req) {
+        return build(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), req);
+    }
+
+    /** @Validated path variables, e.g. a malformed conversation id. */
+    @ExceptionHandler(jakarta.validation.ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponse> invalidParam(Exception ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "Invalid request parameter", req);
     }
 
     /** A database constraint (unique index, foreign key, check) rejected the write. */

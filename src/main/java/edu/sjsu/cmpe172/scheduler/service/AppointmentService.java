@@ -6,13 +6,12 @@ import edu.sjsu.cmpe172.scheduler.exception.ForbiddenException;
 import edu.sjsu.cmpe172.scheduler.exception.NotFoundException;
 import edu.sjsu.cmpe172.scheduler.model.AppUser;
 import edu.sjsu.cmpe172.scheduler.model.Appointment;
-import edu.sjsu.cmpe172.scheduler.notification.AppointmentChangedEvent;
+import edu.sjsu.cmpe172.scheduler.notification.NotificationOutbox;
 import edu.sjsu.cmpe172.scheduler.notification.NotificationType;
 import edu.sjsu.cmpe172.scheduler.repository.AppointmentRepository;
 import edu.sjsu.cmpe172.scheduler.repository.SlotRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +29,14 @@ public class AppointmentService {
     private final AppointmentRepository appointments;
     private final SlotRepository slots;
     private final Clock clock;
-    private final ApplicationEventPublisher events;
+    private final NotificationOutbox outbox;
 
     public AppointmentService(AppointmentRepository appointments, SlotRepository slots, Clock clock,
-                              ApplicationEventPublisher events) {
+                              NotificationOutbox outbox) {
         this.appointments = appointments;
         this.slots = slots;
         this.clock = clock;
-        this.events = events;
+        this.outbox = outbox;
     }
 
     /** scope is "upcoming" or "history". */
@@ -82,8 +81,8 @@ public class AppointmentService {
         }
         slots.reopen(appt.slotId());
         log.info("Customer {} cancelled appointment {} (slot {} reopened)", customer.username(), appointmentId, appt.slotId());
-        // Sent after commit, like the booking confirmation.
-        events.publishEvent(new AppointmentChangedEvent(appointmentId, NotificationType.BOOKING_CANCELLED));
+        // Same transaction as the cancel (transactional outbox), queued after the confirmation.
+        outbox.enqueue(appointmentId, NotificationType.BOOKING_CANCELLED);
 
         return appointments.findViewById(appointmentId)
                 .map(DtoMapper::toDto)

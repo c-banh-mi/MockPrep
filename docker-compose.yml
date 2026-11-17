@@ -1,3 +1,8 @@
+# MockPrep: PostgreSQL + Spring Boot API + Next.js frontend.
+#   cp .env.example .env   (set DB_PASSWORD; add GEMINI_API_KEY for the AI features)
+#   docker compose up --build      -> http://localhost:3000 (web), http://localhost:8080 (API)
+name: mockprep
+
 services:
   db:
     image: postgres:16-alpine
@@ -27,11 +32,30 @@ services:
       TZ: America/Los_Angeles
       DB_USERNAME: ${DB_USERNAME:-scheduler}
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env (copy .env.example)}
-      # Notification service the gateway calls. Default: the mock controller inside this container
-      # (http://localhost:8080/mock-notify). Set it to an unreachable URL to watch the fallback.
+      # Secrets come only from .env (gitignored). Blank JWT_SECRET / NOTIFICATION_API_KEY = random per start.
+      JWT_SECRET: ${JWT_SECRET:-}
+      NOTIFICATION_API_KEY: ${NOTIFICATION_API_KEY:-}
+      # Milestone 4: Gemini (Google AI Studio key). Without it the app runs and AI endpoints answer 503.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.1-flash-lite,gemini-3.8-flash}
+      # Notification service the gateway calls. Default: the mock controller inside this container.
       NOTIFICATION_BASE_URL: ${NOTIFICATION_BASE_URL:-http://localhost:8080/mock-notify}
     ports:
       - "8080:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        API_URL: http://app:8080   # the Next.js server forwards /api/* to the app container
+    depends_on:
+      - app
+    environment:
+      TZ: America/Los_Angeles
+    ports:
+      - "3000:3000"
     restart: unless-stopped
 
 volumes:

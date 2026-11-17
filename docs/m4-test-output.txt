@@ -1,0 +1,21 @@
+MockPrep Milestone 4 test run: mvn -B verify (Testcontainers PostgreSQL 16), 2026-11-17 02:56 PST
+
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.873 s  SlotServiceTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.947 s  NotificationIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.098 s  NotificationSenderTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.677 s  AiFeaturesIntegrationTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.140 s  AppointmentServiceTest
+Tests run: 32, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.681 s  SecurityExposureTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s  FallbackChatModelTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.852 s  AgentBookingToolsTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.582 s  NotificationDownIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.078 s  NotificationRelayTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.446 s  BookingFlowIntegrationTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.065 s  AuthIntegrationTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.742 s  ConcurrentBookingTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.237 s  ApiIntegrationTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.167 s  BookingServiceTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.067 s  ProviderSlotServiceTest
+
+Tests run: 143, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS

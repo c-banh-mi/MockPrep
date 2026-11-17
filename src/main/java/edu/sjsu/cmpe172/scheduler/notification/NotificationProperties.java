@@ -12,9 +12,10 @@ import java.time.Duration;
  * @param enabled         false turns notifications off entirely (bookings are unaffected)
  * @param connectTimeout  give up if the TCP connection is not open by then
  * @param readTimeout     give up if the service has not answered by then
- * @param maxAttempts     attempts right after the commit before falling back to the pending table
+ * @param maxAttempts     attempts per burst (one relay pass) before the row is rescheduled
  * @param backoff         wait before the 2nd attempt; doubles for each attempt after that
- * @param maxRedeliveries total attempts for a pending row before it is marked FAILED
+ * @param maxRedeliveries total attempts for an outbox row before it is marked FAILED
+ * @param redeliveryInterval wait before the next burst once a burst has failed
  */
 @ConfigurationProperties("notification")
 public record NotificationProperties(
@@ -23,7 +24,8 @@ public record NotificationProperties(
         @DefaultValue("2s") Duration readTimeout,
         @DefaultValue("3") int maxAttempts,
         @DefaultValue("200ms") Duration backoff,
-        @DefaultValue("10") int maxRedeliveries) {
+        @DefaultValue("10") int maxRedeliveries,
+        @DefaultValue("30s") Duration redeliveryInterval) {
 
     public NotificationProperties {
         if (maxAttempts < 1) {

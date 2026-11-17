@@ -2,6 +2,7 @@ package edu.sjsu.cmpe172.scheduler.repository;
 
 import edu.sjsu.cmpe172.scheduler.model.Appointment;
 import edu.sjsu.cmpe172.scheduler.model.AppointmentView;
+import edu.sjsu.cmpe172.scheduler.model.ReminderCandidate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -154,6 +155,53 @@ public class AppointmentRepository {
                            AND a.status = 'BOOKED'
                            AND s.end_time <= CURRENT_TIMESTAMP
                         """)
+                .update();
+    }
+
+    /**
+     * Agent 2's scan: BOOKED appointments starting in (from, to] whose reminder has not been
+     * queued yet, soonest first.
+     */
+    public List<ReminderCandidate> findNeedingReminder(LocalDateTime from, LocalDateTime to, int limit) {
+        return jdbc.sql("""
+                        SELECT a.id, c.full_name, sv.name AS service_name, sv.duration_minutes,
+                               p.display_name, p.headline, s.start_time, a.notes
+                          FROM appointments a
+                          JOIN availability_slots s ON s.id = a.slot_id
+                          JOIN services sv ON sv.id = a.service_id
+                          JOIN providers p ON p.id = s.provider_id
+                          JOIN users c ON c.id = a.customer_id
+                         WHERE a.status = 'BOOKED'
+                           AND a.reminder_sent_at IS NULL
+                           AND s.start_time > :from AND s.start_time <= :to
+                         ORDER BY s.start_time, a.id
+                         LIMIT :limit
+                        """)
+                .param("from", from)
+                .param("to", to)
+                .param("limit", limit)
+                .query((rs, i) -> new ReminderCandidate(
+                        rs.getLong("id"),
+                        rs.getString("full_name"),
+                        rs.getString("service_name"),
+                        rs.getInt("duration_minutes"),
+                        rs.getString("display_name"),
+                        rs.getString("headline"),
+                        rs.getTimestamp("start_time").toLocalDateTime(),
+                        rs.getString("notes")))
+                .list();
+    }
+
+    /**
+     * Claims the reminder for this appointment. Returns 0 if it was cancelled meanwhile or another
+     * run already claimed it, so each appointment gets at most one reminder.
+     */
+    public int markReminderSent(long id) {
+        return jdbc.sql("""
+                        UPDATE appointments SET reminder_sent_at = CURRENT_TIMESTAMP
+                         WHERE id = :id AND status = 'BOOKED' AND reminder_sent_at IS NULL
+                        """)
+                .param("id", id)
                 .update();
     }
 

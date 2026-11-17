@@ -1,0 +1,22 @@
+flowchart LR
+    browser["Browser"] --> web["Next.js frontend<br/>:3000<br/>forwards /api/*"]
+    web --> api
+    subgraph api["Spring Boot API :8080"]
+        direction TB
+        sec["Spring Security<br/>JWT bearer + roles"] --> ctrl["Controllers"]
+        ctrl --> svc["Services<br/>@Transactional booking / cancel"]
+        ctrl --> agent1["Agent 1: BookingAgent<br/>ChatClient + tools"]
+        agent1 -- "tools call" --> svc
+        agent2["Agent 2: ReminderAgent<br/>@Scheduled hourly"] --> outbox
+        svc --> repo["Repositories<br/>JdbcClient, hand-written SQL"]
+        svc -- "same transaction" --> outbox["notification_outbox"]
+        relay["NotificationRelay<br/>in order, retry, backoff"] --> gw["NotificationGateway<br/>timeouts + API key"]
+        rag["KnowledgeBase<br/>SimpleVectorStore"]
+    end
+    agent1 <--> gemini["Google Gemini API<br/>chat + embeddings"]
+    agent2 <--> gemini
+    rag <--> gemini
+    repo --> db[("PostgreSQL")]
+    outbox --- db
+    relay --- db
+    gw == "HTTP + X-Api-Key" ==> notify["Notification service<br/>(mock, separate system)"]

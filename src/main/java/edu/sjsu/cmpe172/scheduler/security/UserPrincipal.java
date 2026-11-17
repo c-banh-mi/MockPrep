@@ -9,7 +9,7 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * What Spring Security keeps in the HTTP session after login. Wraps the users row;
+ * The logged-in user (built from the JWT by JwtUserConverter). Wraps the users row;
  * controllers get the row back with {@code @AuthenticationPrincipal(expression = "user")}.
  */
 public record UserPrincipal(AppUser user) implements UserDetails {

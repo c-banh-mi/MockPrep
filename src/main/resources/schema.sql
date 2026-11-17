@@ -1,4 +1,4 @@
--- Interview Scheduler schema (PostgreSQL). All SQL hand-written; no ORM.
+-- MockPrep schema (PostgreSQL). All SQL hand-written; no ORM.
 -- Runs on every startup but only creates what is missing, so bookings survive restarts.
 -- To start over: docker compose down -v (deletes the database volume).
 
@@ -9,9 +9,14 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(100) NOT NULL,            -- BCrypt hash, never plaintext
     full_name     VARCHAR(100) NOT NULL,
     email         VARCHAR(255) NOT NULL UNIQUE,
-    role          VARCHAR(20)  NOT NULL CHECK (role IN ('CUSTOMER', 'PROVIDER')),
+    role          VARCHAR(20)  NOT NULL,
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Milestone 4 adds the ADMIN role (runs the autonomous agent). Replace the old inline CHECK,
+-- which PostgreSQL named users_role_check, so this also upgrades an existing database.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('CUSTOMER', 'PROVIDER', 'ADMIN'));
 
 -- Provider profile (a mentor / interviewer). 1:1 with a PROVIDER user.
 CREATE TABLE IF NOT EXISTS providers (
@@ -75,22 +80,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_appt_active_slot ON appointments (slot_id) 
 
 CREATE INDEX IF NOT EXISTS ix_appt_customer ON appointments (customer_id);
 
--- Milestone 3: fallback store for notifications the notification service did not accept.
--- A booking never waits on this table: a row is written only AFTER the booking committed and
--- every retry failed. NotificationRedeliveryJob re-sends PENDING rows with the same
--- idempotency_key, so the notification service can drop a copy it already received.
-CREATE TABLE IF NOT EXISTS pending_notifications (
-    id              BIGSERIAL    PRIMARY KEY,
+-- Milestone 4: set when the autonomous reminder agent has queued this appointment's reminder,
+-- so each appointment gets at most one reminder.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP;
+
+-- TRANSACTIONAL OUTBOX (fixes two Milestone 3 bugs: lost and out-of-order notifications).
+-- A booking/cancel inserts its notification row here IN THE SAME TRANSACTION as the booking,
+-- so the notification exists exactly when the booking exists, even if the app crashes right
+-- after the commit. NotificationRelay then sends rows in id order (per appointment), marking
+-- each SENT, rescheduling it (PENDING + next_attempt_at) or giving up (FAILED).
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id              BIGSERIAL    PRIMARY KEY,         -- also the delivery order
     idempotency_key VARCHAR(100) NOT NULL UNIQUE,     -- e.g. appointment-12-BOOKING_CONFIRMED
     appointment_id  BIGINT       NOT NULL REFERENCES appointments (id) ON DELETE CASCADE,
     recipient       VARCHAR(255) NOT NULL,
     type            VARCHAR(30)  NOT NULL,
     message         TEXT         NOT NULL,
     status          VARCHAR(20)  NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENT', 'FAILED')),
-    attempts        INT          NOT NULL DEFAULT 0,  -- delivery attempts so far, including the first burst
+    attempts        INT          NOT NULL DEFAULT 0,  -- delivery attempts so far
+    next_attempt_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_error      VARCHAR(500),
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    sent_at         TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS ix_pending_notifications_status ON pending_notifications (status, created_at);
+CREATE INDEX IF NOT EXISTS ix_outbox_status_id ON notification_outbox (status, id);
+
+-- Milestone 3's after-the-fact fallback table, replaced by the outbox above.
+DROP TABLE IF EXISTS pending_notifications;
+
+-- Milestone 4 (bonus: persistent conversation memory). Spring AI's JdbcChatMemoryRepository
+-- reads and writes this table, so a chat with the booking agent survives an app restart.
+-- Same layout as Spring AI's schema-postgresql.sql, with a longer conversation_id
+-- ("<user id>:<uuid>", so one user can never load another user's conversation).
+CREATE TABLE IF NOT EXISTS spring_ai_chat_memory (
+    conversation_id VARCHAR(100) NOT NULL,
+    content         TEXT         NOT NULL,
+    type            VARCHAR(10)  NOT NULL CHECK (type IN ('USER', 'ASSISTANT', 'SYSTEM', 'TOOL')),
+    "timestamp"     TIMESTAMP    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS spring_ai_chat_memory_conversation_id_timestamp_idx
+    ON spring_ai_chat_memory (conversation_id, "timestamp");

@@ -5,11 +5,10 @@ import edu.sjsu.cmpe172.scheduler.exception.ConflictException;
 import edu.sjsu.cmpe172.scheduler.exception.NotFoundException;
 import edu.sjsu.cmpe172.scheduler.exception.SlotUnavailableException;
 import edu.sjsu.cmpe172.scheduler.model.Slot;
-import edu.sjsu.cmpe172.scheduler.notification.AppointmentChangedEvent;
+import edu.sjsu.cmpe172.scheduler.notification.NotificationOutbox;
 import edu.sjsu.cmpe172.scheduler.notification.NotificationType;
 import edu.sjsu.cmpe172.scheduler.repository.AppointmentRepository;
 import edu.sjsu.cmpe172.scheduler.repository.SlotRepository;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Isolation;
@@ -29,19 +28,20 @@ public class SlotBooker {
     private final SlotRepository slots;
     private final AppointmentRepository appointments;
     private final Clock clock;
-    private final ApplicationEventPublisher events;
+    private final NotificationOutbox outbox;
 
     public SlotBooker(SlotRepository slots, AppointmentRepository appointments, Clock clock,
-                      ApplicationEventPublisher events) {
+                      NotificationOutbox outbox) {
         this.slots = slots;
         this.appointments = appointments;
         this.clock = clock;
-        this.events = events;
+        this.outbox = outbox;
     }
 
     /**
      * Read the slot, check the booking rules, then claim it with a version-checked UPDATE
-     * and insert the appointment. Both writes commit together or not at all.
+     * and insert the appointment and its confirmation (outbox row). All three writes commit
+     * together or not at all.
      *
      * @return the new appointment's id
      * @throws OptimisticLockingFailureException if another transaction changed the slot
@@ -73,9 +73,10 @@ public class SlotBooker {
         // for this slot even if the check above were ever bypassed (DuplicateKeyException).
         long appointmentId = appointments.insert(slot.id(), slot.serviceId(), customerId, req.notes());
 
-        // Delivered only after this transaction commits (see AppointmentNotificationListener).
-        // A lost race rolls back, so a retried booking never sends a second confirmation.
-        events.publishEvent(new AppointmentChangedEvent(appointmentId, NotificationType.BOOKING_CONFIRMED));
+        // Transactional outbox: the confirmation is written in THIS transaction, so it exists if and
+        // only if the booking does. NotificationRelay sends it after the commit. A lost race rolls
+        // back the row too, so a retried booking never queues a second confirmation.
+        outbox.enqueue(appointmentId, NotificationType.BOOKING_CONFIRMED);
         return appointmentId;
     }
 }

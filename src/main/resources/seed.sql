@@ -12,6 +12,12 @@ SELECT * FROM (VALUES
 ) AS v (username, password_hash, full_name, email, role)
 WHERE NOT EXISTS (SELECT 1 FROM users);
 
+-- Milestone 4: an operator account (runs the autonomous reminder agent). Added by name, so it
+-- also appears in a database seeded before Milestone 4.
+INSERT INTO users (username, password_hash, full_name, email, role)
+SELECT 'admin', '$2a$10$J5aZUzfFtU88IsVN.72nq.jJB73Mp2PQ0TiBAV27rX4JBRaJJcTXy', 'MockPrep Admin', 'admin@example.com', 'ADMIN'
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
+
 INSERT INTO providers (user_id, display_name, headline, bio)
 SELECT * FROM (VALUES
     ((SELECT id FROM users WHERE username = 'alice.mentor'), 'Alice Nguyen',

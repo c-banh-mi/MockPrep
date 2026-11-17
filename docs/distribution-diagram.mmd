@@ -1,30 +1,29 @@
 flowchart TB
-    client["<b>Client</b><br/>Browser SPA / curl"]
+    client["<b>Client</b><br/>Next.js frontend / curl<br/>Authorization: Bearer JWT"]
 
-    subgraph scheduler["Appointment Scheduler (Spring Boot)"]
+    subgraph scheduler["MockPrep API (Spring Boot)"]
         direction TB
-        api["CustomerController<br/>POST /api/customer/appointments<br/>POST .../{id}/cancel"]
-        tx["SlotBooker / AppointmentService<br/>@Transactional: write rows + publish event"]
-        listener["AppointmentNotificationListener<br/>AFTER_COMMIT, @Async (notify-N thread)"]
-        sender["NotificationSender<br/>retry: 3 attempts, 200 ms / 400 ms backoff<br/>fallback: park in pending_notifications"]
-        job["NotificationRedeliveryJob<br/>every 30 s, same idempotency key"]
+        api["CustomerController / BookingAgent tools<br/>book, cancel"]
+        tx["SlotBooker / AppointmentService / ReminderAgent<br/>ONE transaction: change + outbox row"]
+        relay["NotificationRelay<br/>AFTER_COMMIT trigger + 5 s poll<br/>rows in id order, per-appointment ordering"]
+        sender["NotificationSender<br/>3 attempts, 200 ms / 400 ms backoff<br/>then next_attempt_at +30 s, FAILED after 10"]
         gateway["NotificationGateway interface<br/>RestNotificationGateway<br/>timeouts: connect 1 s, read 2 s"]
         api --> tx
-        tx -. "1. COMMIT<br/>2. then event" .-> listener
-        listener --> sender --> gateway
-        job --> gateway
+        relay --> sender --> gateway
     end
 
-    db[("PostgreSQL<br/>appointments, availability_slots, ...<br/>pending_notifications")]
+    db[("PostgreSQL<br/>appointments, availability_slots, ...<br/>notification_outbox")]
 
     subgraph external["Notification Service (mock, separate system)"]
+        auth["MockNotifyApiKeyFilter<br/>401 without X-Api-Key"]
         mock["MockNotificationController<br/>POST /mock-notify/api/notifications<br/>stores each idempotencyKey once"]
+        auth --> mock
     end
 
     client -- "HTTP/JSON<br/>201 right after commit" --> api
-    tx -- "JDBC (booking tx)" --> db
-    sender -- "park" --> db
-    db -- "PENDING rows" --> job
-    gateway == "HTTP POST, one coarse-grained call<br/>NotificationRequest DTO:<br/>idempotencyKey, recipient, type,<br/>message, appointmentId" ==> mock
+    tx -- "JDBC: booking + outbox row commit together" --> db
+    db -- "PENDING rows, oldest first" --> relay
+    sender -- "SENT / retry later / FAILED" --> db
+    gateway == "HTTP POST + X-Api-Key + Idempotency-Key<br/>NotificationRequest DTO:<br/>idempotencyKey, recipient, type,<br/>message, appointmentId" ==> auth
 
     style external stroke-dasharray: 5 5

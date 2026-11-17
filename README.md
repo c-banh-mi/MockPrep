@@ -1,255 +1,265 @@
-# Interview Scheduler
+# MockPrep
 
-CMPE 172 term project: an **Online Appointment Scheduling System** where software engineers book
-**resume reviews and mock interviews** (coding, system design, behavioral) with experienced mentors.
+**Book mock interviews and resume reviews with experienced engineers, or just ask the AI agent to do it.**
 
-- **Customer**: a job-seeking engineer who browses and books sessions
-- **Provider**: a mentor/interviewer who publishes availability
+MockPrep is a full-stack scheduling platform for software engineers preparing for interviews. Customers book
+coding, system-design and behavioral mock interviews with mentors; mentors publish their availability. On top of a
+transactional booking core it runs **two AI agents and a retrieval-augmented help desk**, built with
+**Spring AI + Google Gemini**.
 
-Stack: **Java 21, Spring Boot 3.5, PostgreSQL 16, plain JDBC (`JdbcClient`) with hand-written SQL. No ORM.**
+Built for SJSU CMPE 172 (Enterprise Software Platforms), Fall 2026, in four milestones.
 
-> Note: `hibernate-validator` appears in the dependency tree. It is the Bean Validation (`@NotNull`, `@Size`)
-> implementation pulled in by `spring-boot-starter-validation`, **not** Hibernate ORM. There is no JPA/Hibernate ORM on the classpath.
+**Stack:** Java 21 · Spring Boot 3.5 · Spring Security (JWT) · Spring AI 1.1 + Gemini · PostgreSQL 16 (plain JDBC,
+hand-written SQL) · Next.js 16 + React 19 + TypeScript · Docker Compose · GitHub Actions · Testcontainers
 
-## What's implemented
+## AI and agentic features
 
-Layered design: **Controller → Service → Repository (JDBC, hand-written SQL) → PostgreSQL**. Controllers return
-DTOs, never raw rows. The frontend is a Bootstrap 5 single-page app (`static/index.html` + `app.js`) that calls the
-JSON API below with `fetch()`.
-
-### Milestone 3: distribution boundary, observability, delivery
-
-![Distribution diagram](docs/distribution-diagram.png)
-
-**Client → Appointment Scheduler → Notification Service.** Booking and cancelling send a confirmation to a
-**mock notification service** (`mocknotify/MockNotificationController`, `/mock-notify/**`). It is a second Spring
-controller in this project, but it is treated as a separate system: the scheduler reaches it only over HTTP
-through a Gateway, and the two sides share no Java classes, only the JSON shape.
-
-- **Coarse-grained interface:** `NotificationGateway.send(NotificationRequest)` is one remote call carrying one
-  DTO `{idempotencyKey, recipient, type, message, appointmentId}`. The finished message travels with the call, so
-  the service never calls back into the scheduler. `RestNotificationGateway` is the HTTP implementation; a real
-  channel (Slack/Discord webhook, SMTP) would be another implementation of the same interface.
-- **Commit, then notify:** `SlotBooker.bookOnce` and `AppointmentService.cancel` publish an
-  `AppointmentChangedEvent` inside their transaction. `AppointmentNotificationListener` is
-  `@TransactionalEventListener(AFTER_COMMIT)` + `@Async`: it runs only if the transaction committed, on a
-  background thread (`notify-N`). The HTTP response does not wait for the notification service. A booking attempt
-  that loses a race rolls back, so its event is dropped and a retried booking sends exactly one confirmation.
-- **Timeout:** connect 1 s, read 2 s (`notification.connect-timeout`, `notification.read-timeout`).
-- **Retry:** `NotificationSender` tries 3 times with exponential backoff (200 ms, 400 ms) on timeouts, refused
-  connections and 5xx answers. A 4xx answer is not retried (resending the same request cannot fix it).
-- **Fallback:** if every attempt fails, the notification is stored in `pending_notifications` (status `PENDING`;
-  `FAILED` for a 4xx). `NotificationRedeliveryJob` re-sends PENDING rows every 30 s. After 10 total attempts, the
-  row becomes `FAILED`.
-- **Idempotent retries:** each notification has a fixed key `appointment-{id}-{BOOKING_CONFIRMED|BOOKING_CANCELLED}`,
-  sent in the body and as an `Idempotency-Key` header. The mock stores each key once and answers `DUPLICATE` for a
-  repeat. Case covered: a timed-out call that did reach the service, followed by a retry.
-
-Mock service endpoints (demo only; disable with `mock-notify.enabled=false`):
-
-| Method | Path | Description |
+| Feature | What it does | Code |
 |---|---|---|
-| POST | `/mock-notify/api/notifications` | Receive a notification. 201 ACCEPTED, 200 DUPLICATE, 503 when DOWN |
-| GET | `/mock-notify/api/notifications` | Everything "sent" so far |
-| GET / PUT | `/mock-notify/admin/mode?mode=UP\|SLOW\|DOWN&delayMs=5000` | Make the mock slow or fail |
+| **Conversational booking agent** (Agent 1, reactive) | Chat in plain English: *"find the earliest mock coding interview this week and book it"*. Gemini calls tools in several steps (check availability → propose booking → summarize), asks for confirmation, handles a slot that is taken by offering alternatives, and remembers the conversation. | `ai/agent/BookingAgent`, `BookingAgentTools` |
+| **Guarded writes** | Every tool wraps an existing service-layer method. Book and cancel go through the same `@Transactional` services as the REST API, so the double-booking guard, owner-only cancel and RBAC still apply. Tools are bound to the logged-in user (no user-id parameter), so the model cannot act as anyone else. | `BookingAgentTools.book/cancel` |
+| **Confirm-before-write, enforced in code** | `proposeBooking` only stores a server-side pending action. `confirmPendingAction` refuses to run in the same turn as the proposal, so the user must have replied "yes" first, whatever the model decides. | `PendingAction`, `AgentSessions` |
+| **Autonomous reminder agent** (Agent 2, proactive) | An hourly `@Scheduled` job that nobody prompts. It finds sessions starting within 24 h, retrieves preparation tips for the session type, has Gemini write a personalized reminder, and sends it through the notification service. An admin can also run it on demand. | `ai/reminder/ReminderAgent` |
+| **Grounded Q&A (RAG)** | Policy/FAQ questions are answered only from MockPrep's handbook. The handbook is split into sections, embedded with Gemini embeddings, stored in a `SimpleVectorStore`, retrieved by similarity and passed to the model as context. Answers list their sources. | `ai/knowledge/KnowledgeBase`, `PolicyQaService`, [`knowledge/mockprep-handbook.md`](src/main/resources/knowledge/mockprep-handbook.md) |
+| **Bonus: persistent conversation memory** | Chat history is stored in PostgreSQL through Spring AI's `JdbcChatMemoryRepository`, so a conversation survives a restart. Each conversation id is prefixed with the user id, so users can only load their own. | `schema.sql` (`spring_ai_chat_memory`), `BookingAgent.history` |
 
-**Observability**
+Without a `GEMINI_API_KEY` the app still runs normally. The AI endpoints answer `503 "AI is not configured"`, and
+the tests use stand-in models, so CI never calls the real API.
 
-| What | Where |
-|---|---|
-| `GET /health` | 200 `{"status":"UP","database":{"status":"UP","responseTimeMs":1},"notifications":{"status":"UP","pending":0,"failed":0}}`. Database check = `SELECT 1`. Database unreachable → **503** `"status":"DOWN"`. Parked notifications → `notifications.status: "DEGRADED"` while the app stays UP. Docker `HEALTHCHECK` calls it. |
-| Metric `scheduler.booking` (timer) | Tag `outcome` = `booked` / `unavailable` / `conflict` / `rejected` / `error`. Gives bookings, failed bookings and average booking latency (`TOTAL_TIME / COUNT`). `GET /actuator/metrics/scheduler.booking?tag=outcome:booked` |
-| Metric `scheduler.notifications` (counter) | Tags `result` = `sent` / `parked` / `redelivered` / `failed`, `type`. `GET /actuator/metrics/scheduler.notifications?tag=result:parked` |
-| Logs | INFO `Customer jordan.dev booked slot 11 (appointment 3, attempt 1)`, `Sent BOOKING_CONFIRMED to jordan@example.com ...`, `Redelivered appointment-3-BOOKING_CONFIRMED ...`; WARN `Notification appointment-3-BOOKING_CONFIRMED attempt 1/3 failed: ... Retrying in 200 ms`, `Notification service unavailable after 3 attempt(s); parked ...`, `Booking failed: customer sam.dev slot 4: ...`; ERROR `Notification ... rejected, not retrying`, `Giving up on notification ...`, `Health check: database unreachable`, `Could not send or park ... notification` |
+## Milestones
 
-**Try the failure and recovery** (app running on :8080):
+| | What was built | Report | Code walkthrough |
+|---|---|---|---|
+| **M1** Foundations | Layered Spring Boot skeleton, PostgreSQL schema with a double-booking guard, ER and block diagrams, wireframes, Docker, CI | [PDF](docs/CMPE172_Milestone1_Report.pdf) | [video](https://drive.google.com/file/d/1bjLsSmwjBthYJkkrbdtsvMnHgxPHTZpi/view?usp=sharing) |
+| **M2** Booking core | Login + role-based access, browse/book/cancel, provider slots, optimistic locking with a retry loop, concurrency test (two threads, one slot) | [PDF](docs/CMPE172_Milestone2_Report.pdf) | [video](https://drive.google.com/file/d/10eYO288ZeQLtlxiJdYc3K5R9Ii3TWqV-/view?usp=sharing) |
+| **M3** Distribution & operations | Notification service boundary (gateway, timeout, retry, fallback, idempotency), `/health`, metrics, logging, Docker health check, CI | [PDF](docs/CMPE172_Milestone3_Report.pdf) | [video](https://drive.google.com/file/d/1OmLJ7df6l5PLxmGjS5zRz7_moh1DLNOu/view?usp=sharing) |
+| **M4** Enterprise AI | Two Gemini agents, RAG Q&A, JWT auth, Next.js frontend, transactional outbox (fixes the two M3 review findings), mock-service API key | _added at submission_ | _added at submission_ |
 
-```bash
-curl -X PUT 'localhost:8080/mock-notify/admin/mode?mode=DOWN'   # or SLOW&delayMs=5000
-# book in the UI -> 201 right away; logs show 3 attempts, then "parked ... for redelivery"
-curl localhost:8080/health                                       # notifications: DEGRADED, pending: 1
-curl -X PUT 'localhost:8080/mock-notify/admin/mode?mode=UP'
-# within 30 s: "Redelivered ..."; /health back to UP; GET /mock-notify/api/notifications shows it once
+## Architecture
+
+```mermaid
+flowchart LR
+    browser["Browser"] --> web["Next.js frontend<br/>:3000<br/>forwards /api/*"]
+    web --> api
+    subgraph api["Spring Boot API :8080"]
+        direction TB
+        sec["Spring Security<br/>JWT bearer + roles"] --> ctrl["Controllers"]
+        ctrl --> svc["Services<br/>@Transactional booking / cancel"]
+        ctrl --> agent1["Agent 1: BookingAgent<br/>ChatClient + tools"]
+        agent1 -- "tools call" --> svc
+        agent2["Agent 2: ReminderAgent<br/>@Scheduled hourly"] --> outbox
+        svc --> repo["Repositories<br/>JdbcClient, hand-written SQL"]
+        svc -- "same transaction" --> outbox["notification_outbox"]
+        relay["NotificationRelay<br/>in order, retry, backoff"] --> gw["NotificationGateway<br/>timeouts + API key"]
+        rag["KnowledgeBase<br/>SimpleVectorStore"]
+    end
+    agent1 <--> gemini["Google Gemini API<br/>chat + embeddings"]
+    agent2 <--> gemini
+    rag <--> gemini
+    repo --> db[("PostgreSQL")]
+    outbox --- db
+    relay --- db
+    gw == "HTTP + X-Api-Key" ==> notify["Notification service<br/>(mock, separate system)"]
 ```
 
-**Delivery:** `Dockerfile` (multi-stage, `HEALTHCHECK` on `/health`) and `docker-compose.yml` (app + PostgreSQL).
-GitHub Actions (`.github/workflows/ci.yml`) runs `mvn -B verify` (all tests, PostgreSQL via Testcontainers),
-uploads the test reports and builds the Docker image on every push.
+**Layers:** Controller → Service → Repository (JDBC) → PostgreSQL. Controllers return DTOs, never rows. Agents are
+another client of the service layer, not a shortcut around it.
 
-**Tests:** `NotificationDownIntegrationTest` (booking and cancel succeed while the notification service is
-unreachable; the notifications are parked; `/health` is DEGRADED), `NotificationIntegrationTest` (real HTTP on a
-random port: one notification per book/cancel; slow service → timeout → parked → redelivered with no duplicate;
-503 → parked → redelivered; `/health`; metric), `NotificationSenderTest` (retry/fallback rules).
+Design docs: [architecture](docs/architecture-diagram.png) · [notification boundary + outbox](docs/distribution-diagram.png) ·
+[ER diagram](docs/er-diagram.png) · [relational schema](docs/relational-schema.md) ·
+[booking sequence](docs/booking-sequence.png) · [block diagram](docs/block-diagram.png) ·
+[wireframes](docs/wireframes.pdf) (Mermaid sources next to each PNG)
 
-### Milestone 2: booking, login, concurrency
+## Quick start (Docker)
 
-- **Login + RBAC:** username/password checked against a BCrypt hash; the role is read from `users.role` over JDBC;
-  a server-side HTTP session (cookie `JSESSIONID`) keeps you logged in. `/api/customer/**` is customer-only and
-  `/api/provider/**` is provider-only. Not logged in → **401**, wrong role → **403**.
-- **Customer:** browse/filter/paginate open slots, book a slot, see the confirmation, view upcoming/history,
-  cancel own appointment (owner-only).
-- **Provider:** add availability slots (each tied to a service; length = the service's duration), remove own
-  open slots, view appointments booked with them.
-- **Statuses:** BOOKED, CANCELLED, and COMPLETED (set for past appointments by a once-a-minute job).
-- **Double-booking prevention:** see [Concurrency](#concurrency-and-transactions) below.
-- **Errors:** JSON body `{timestamp, status, error, message, path}` with 400 / 401 / 403 / 404 / 409; never a stack trace.
-- Design decisions for this milestone: [`DECISIONS.md`](DECISIONS.md).
+```bash
+cp .env.example .env          # set DB_PASSWORD; add GEMINI_API_KEY for the AI features
+docker compose up --build     # web http://localhost:3000, API http://localhost:8080
+```
 
-### API
+Seeded accounts (password `password123`): customers `sam.dev`, `jordan.dev`; mentors `alice.mentor`,
+`raj.mentor`, `maria.mentor`; admin `admin`. Data persists in the `pgdata` volume; `docker compose down -v`
+resets it (seed slots are created relative to the day the database is first seeded).
+
+### Local development
+
+```bash
+docker compose up -d db
+export $(grep -v '^#' .env | xargs)
+mvn spring-boot:run                       # API on :8080
+cd frontend && npm install && npm run dev # web on :3000 (forwards /api to :8080)
+```
+
+Prerequisites: JDK 21, Maven 3.9+, Node 20.9+, Docker.
+
+### Configuration (`.env`, never committed)
+
+| Variable | Purpose | If blank |
+|---|---|---|
+| `DB_PASSWORD` (`DB_USERNAME`, `DB_URL`) | PostgreSQL | required |
+| `GEMINI_API_KEY` | Google AI Studio key. Only the API key is used (Gemini Developer API), never a Cloud project-id/location | AI features answer 503 |
+| `GEMINI_MODEL` | Chat model, default `gemini-3.5-flash-lite` | default |
+| `GEMINI_FALLBACK_MODEL` | Models tried in order when the primary fails, default `gemini-3.1-flash-lite,gemini-3.8-flash` | default |
+| `JWT_SECRET` | HS256 signing key, base64, 32+ bytes (`openssl rand -base64 32`) | random per start |
+| `NOTIFICATION_API_KEY` | Shared key between the scheduler and the notification service | random per start |
+
+**Model choice.** `gemini-3.8-flash` is the newest Flash model on the Gemini API, but on 2026-11-17 it answered most
+requests with `503 high demand` (free tier). `gemini-3.5-flash-lite` answered every call in about a second and handles
+tool calling well, so it is the default; set `GEMINI_MODEL=gemini-3.8-flash` to use the newest model.
+Gemini is treated like any external service: 20 s timeout per call, 2 attempts, then fallback models
+(`FallbackChatModel`), with a 60 s circuit breaker that skips a failing primary.
+
+## How the AI agents work
+
+**Agent 1 tools** (`BookingAgentTools`, one instance per request, bound to the logged-in customer):
+
+| Tool | Wraps | Writes? |
+|---|---|---|
+| `listServicesAndMentors` | `CatalogService` | no |
+| `checkAvailability(fromDate, toDate, serviceId?, mentorId?)` | `SlotService.findOpenSlots` (SQL `LIMIT/OFFSET`) | no |
+| `listMyAppointments(scope)` | `AppointmentService.listForCustomer` | no |
+| `searchPolicies(question)` | `KnowledgeBase.search` (vector similarity) | no |
+| `proposeBooking(slotId, notes)` / `proposeCancellation(appointmentId)` | `SlotService.findOpenSlot` / own upcoming list | stores a pending action only |
+| `confirmPendingAction()` | `BookingService.book` / `AppointmentService.cancel` | **yes**, only in a later turn |
+| `discardPendingAction()` | n/a | no |
+
+One chat turn: Spring AI sends the system prompt (rules, today's date, the user), the stored conversation, the new
+message and the tool definitions to Gemini. Gemini answers or requests tool calls; Spring AI executes them and
+returns the results, looping until Gemini produces the final text. If a confirmed booking loses a race, the
+transactional service throws `SlotUnavailableException` and the tool returns three alternatives instead.
+
+**Agent 2** (`ReminderAgent`): scan → retrieve tips (RAG) → LLM writes the reminder → in one transaction, claim the
+appointment (`reminder_sent_at`) and insert the message into the notification outbox → the relay delivers it. An LLM
+failure leaves the appointment unclaimed, so the next run retries it. Manual trigger:
+`POST /api/admin/agents/reminders/run` (ADMIN), or **Run now** on the Admin page.
+
+**RAG:** `KnowledgeBase` splits the handbook at its `##` headings (one chunk per section), embeds the chunks with
+`gemini-embedding-2` at startup, and keeps them in Spring AI's in-memory `SimpleVectorStore`. `PolicyQaService` uses
+`QuestionAnswerAdvisor` (top 4 chunks above a similarity threshold) and a system prompt that allows answers only from
+that context.
+
+## Reliability: notifications (Milestone 3, revised in Milestone 4)
+
+- **Transactional outbox:** booking, cancelling and the reminder agent insert their notification into
+  `notification_outbox` *inside the same transaction* as the change. A crash after the commit cannot lose it.
+  A rolled-back booking attempt leaves no notification.
+- **Relay:** `NotificationRelay` sends rows in write order. It runs right after each commit (`AFTER_COMMIT`
+  event, background thread) and polls every 5 s as a safety net, for example after a restart. If a row cannot be
+  sent, later rows for the same appointment wait behind it, so a "cancelled" never arrives before its "confirmed".
+- **Timeout / retry / fallback:** connect 1 s, read 2 s; 3 tries per burst with 200/400 ms backoff; then the row stays
+  `PENDING` with `next_attempt_at` 30 s later; `FAILED` after 10 attempts or on a 4xx.
+- **Idempotency:** key `appointment-{id}-{TYPE}` (unique in the outbox, sent as `Idempotency-Key`). The service
+  stores each key once, so a retry after a lost answer does not notify twice.
+- **Protected service:** every `/mock-notify/**` request (send, read messages, admin mode switch) needs the
+  `X-Api-Key` header, or it gets 401. The key is compared in constant time.
+
+## Security
+
+- **JWT:** `POST /api/auth/login` checks the BCrypt hash and returns an HS256-signed token (`sub`, `uid`, `roles`,
+  2 h expiry). Every request sends `Authorization: Bearer <token>`; Spring's OAuth2 resource server verifies it. The
+  user and role are re-read from the database on each request. There is no server session and no auth cookie, so
+  CSRF protection is not needed.
+- **RBAC:** `/api/customer/**` CUSTOMER, `/api/provider/**` PROVIDER, `/api/admin/**` ADMIN, `/api/assistant/chat`
+  CUSTOMER, `/api/assistant/ask` any logged-in user. No or invalid token → 401, wrong role → 403. Services check
+  ownership again (defense in depth).
+- **AI rate limit:** 10 AI requests per user per minute (429 after that), so one account cannot use up the shared
+  Gemini quota for everyone.
+- **Operations data:** `/actuator/metrics` is ADMIN-only; only `/health` and `/actuator/health` are public; other
+  actuator endpoints (env, configprops) are not exposed.
+- **CORS:** only the origins in `CORS_ORIGINS` (default `http://localhost:3000`).
+- **Secrets:** only in `.env` / environment variables; nothing secret is committed.
+
+## API
 
 | Method | Path | Who | Description |
 |---|---|---|---|
-| GET | `/` | anyone | The web app |
-| GET | `/api/home` | anyone | Services, providers, open-slot count |
-| GET | `/api/slots` | anyone | Open future slots. Query: `providerId`, `serviceId`, `date` (YYYY-MM-DD), `page` (0-based), `size` (1–50). SQL `LIMIT/OFFSET` |
-| GET | `/api/slots/{id}` | anyone | One open slot (404 if booked, removed or past) |
-| GET | `/api/services`, `/api/providers` | anyone | Catalog |
-| POST | `/api/auth/login` | anyone | Form fields `username`, `password`. 200 + user JSON, or 401 |
-| POST | `/api/auth/logout` | logged in | 204 |
-| GET | `/api/auth/me` | anyone | Current user, or 204 if not logged in |
-| POST | `/api/customer/appointments` | CUSTOMER | Book. Body `{"slotId", "serviceId", "notes"}`. 201, or **409 if the slot was taken** |
+| POST | `/api/auth/login` | anyone | `{"username","password"}` → `{token, tokenType, expiresAt, user}` or 401 |
+| GET | `/api/auth/me` | anyone | Current user, or 204 |
+| GET | `/api/home`, `/api/services`, `/api/providers` | anyone | Catalog |
+| GET | `/api/slots?providerId&serviceId&date&page&size` | anyone | Open future slots, paginated |
+| GET | `/api/slots/{id}` | anyone | One open slot |
+| POST | `/api/customer/appointments` | CUSTOMER | Book `{"slotId","serviceId","notes"}` → 201, or **409** if taken |
 | GET | `/api/customer/appointments?scope=upcoming\|history` | CUSTOMER | My appointments |
-| POST | `/api/customer/appointments/{id}/cancel` | CUSTOMER (owner) | Cancel; the slot opens again |
-| GET | `/api/provider/slots` | PROVIDER | My upcoming slots (OPEN and BOOKED) |
-| POST | `/api/provider/slots` | PROVIDER | Body `{"serviceId", "startTime": "2026-11-02T10:00"}`. 201, 409 if it overlaps |
-| DELETE | `/api/provider/slots/{id}` | PROVIDER (owner) | Remove an OPEN slot (soft delete). 204 |
-| GET | `/api/provider/appointments?scope=upcoming\|history` | PROVIDER | Appointments booked with me |
-| GET | `/health` | anyone | Health check with database check (503 if the database is down) |
-| GET | `/actuator/health`, `/actuator/metrics/{name}` | anyone | Spring Actuator health and metrics |
+| POST | `/api/customer/appointments/{id}/cancel` | CUSTOMER (owner) | Cancel; the slot reopens |
+| GET / POST | `/api/provider/slots` | PROVIDER | My slots / add one `{"serviceId","startTime"}` |
+| DELETE | `/api/provider/slots/{id}` | PROVIDER (owner) | Remove an open slot |
+| GET | `/api/provider/appointments?scope=` | PROVIDER | Booked with me |
+| POST | `/api/assistant/chat` | CUSTOMER | `{"conversationId","message"}` → `{reply, pendingAction, actionsTaken}` |
+| GET / DELETE | `/api/assistant/chat/{conversationId}` | CUSTOMER | Stored conversation / forget it |
+| POST | `/api/assistant/ask` | logged in | `{"question"}` → `{answer, sources}` (RAG) |
+| POST | `/api/admin/agents/reminders/run` | ADMIN | Run the autonomous agent now |
+| GET | `/api/admin/notifications` | ADMIN | Latest outbox rows |
+| GET | `/health` | anyone | Database + notification status (503 if the database is down) |
+| GET | `/actuator/metrics/{scheduler.booking\|scheduler.notifications\|scheduler.ai.reminders}` | ADMIN | Metrics |
 
-Write requests need the CSRF token: send the `XSRF-TOKEN` cookie's value in an `X-XSRF-TOKEN` header
-(`app.js` does this; see the curl example below).
-
-### Concurrency and transactions
-
-Two customers clicking **Book** on the same slot at the same moment must not both get it.
-
-1. `SlotBooker.bookOnce()` runs in one `@Transactional(isolation = READ_COMMITTED)` transaction: read the slot
-   (including its `version`), check the rules, then claim it with an **optimistic version check**:
-   ```sql
-   UPDATE availability_slots SET status = 'BOOKED', version = version + 1
-    WHERE id = :id AND version = :version AND status = 'OPEN'
-   ```
-   and insert the appointment. 0 rows updated means another transaction got there first.
-2. `BookingService.book()` retries a lost race up to 3 times, each in a **new** transaction. The retry re-reads
-   the slot, sees it BOOKED, and returns **409 Conflict**.
-3. Backstop in the database: `CREATE UNIQUE INDEX uq_appt_active_slot ON appointments (slot_id) WHERE status = 'BOOKED'`.
-
-Proof: `ConcurrentBookingTest` starts two threads on the same slot behind a barrier (10 repetitions) and asserts
-exactly one booking succeeds, the other gets `SlotUnavailableException` (409), and the database has exactly one
-active appointment.
-
-### Milestone 1
-
-- `schema.sql` (5 tables + double-booking guard) and `seed.sql`, run on every startup. Both only add what is missing,
-  so data survives restarts. Reset with `docker compose down -v`.
-- Dockerfile, docker-compose.yml, GitHub Actions CI ([Actions](https://github.com/c-banh-mi/cmpe172-interview-scheduler/actions))
-
-Design docs:
-- ER diagram: [`docs/er-diagram.png`](docs/er-diagram.png) (Mermaid source: [`docs/er-diagram.mmd`](docs/er-diagram.mmd))
-- Block diagram (Milestone 2: with the Spring Security layer): [`docs/block-diagram.png`](docs/block-diagram.png) (Mermaid source: [`docs/block-diagram.mmd`](docs/block-diagram.mmd))
-- Booking sequence diagram (`POST /api/customer/appointments`, retry and 409 paths): [`docs/booking-sequence.png`](docs/booking-sequence.png) (Mermaid source: [`docs/booking-sequence.mmd`](docs/booking-sequence.mmd))
-- Milestone 2 test results: [`docs/test-output.txt`](docs/test-output.txt); report snippets: [`docs/m2-report-material.md`](docs/m2-report-material.md); video order: [`docs/m2-video-cheatsheet.md`](docs/m2-video-cheatsheet.md)
-- Relational schema: [`docs/relational-schema.md`](docs/relational-schema.md)
-- Wireframes (Home, Available slots, Book appointment, Confirmation): [`docs/wireframes/`](docs/wireframes/) and [`docs/wireframes.pdf`](docs/wireframes.pdf)
-- Milestone 1 report: [`docs/CMPE172_Milestone1_Report.pdf`](docs/CMPE172_Milestone1_Report.pdf)
-- Milestone 2 report: [`docs/CMPE172_Milestone2_Report.pdf`](docs/CMPE172_Milestone2_Report.pdf)
-
-## Prerequisites
-
-- JDK 21, Maven 3.8+
-- Docker (for PostgreSQL and for the integration tests)
-
-## Setup
-
-Create your local `.env` (gitignored; never commit it). Docker Compose needs it for both build and run:
+Example:
 ```bash
-cp .env.example .env    # then edit DB_PASSWORD
+TOKEN=$(curl -s -X POST localhost:8080/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"sam.dev","password":"password123"}' | jq -r .token)
+curl -s localhost:8080/api/customer/appointments -H "Authorization: Bearer $TOKEN"
+curl -s -X POST localhost:8080/api/assistant/chat -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"conversationId":"demo-0001","message":"Find the earliest mock coding interview this week"}'
 ```
 
-## Build
+## Concurrency (double-booking prevention)
 
-```bash
-mvn -B package          # compile, run tests (needs Docker), produce target/interview-scheduler-*.jar
-docker compose build    # build the app's Docker image (Maven runs inside the image; tests skipped)
-```
+1. `SlotBooker.bookOnce` runs in one `@Transactional(READ_COMMITTED)` transaction and claims the slot with an
+   optimistic version check: `UPDATE availability_slots SET status='BOOKED', version=version+1 WHERE id=? AND
+   version=? AND status='OPEN'`. 0 rows updated means someone else won.
+2. `BookingService` retries a lost race up to 3 times, each in a new transaction; the retry sees BOOKED → 409.
+3. Database backstop: `UNIQUE INDEX uq_appt_active_slot ON appointments (slot_id) WHERE status='BOOKED'`.
 
-## Run
+## Tests
 
-**Option A: everything in Docker**
-```bash
-docker compose up --build
-# open http://localhost:8080
-```
+`mvn -B verify` runs 143 tests against a real PostgreSQL (Testcontainers). Without Docker:
+`mvn test -Dspring.profiles.active=localdb` against a throwaway local database.
 
-**Option B: DB in Docker, app from Maven (for development)**
-```bash
-docker compose up -d db
-export $(grep -v '^#' .env | xargs)   # load DB_USERNAME / DB_PASSWORD into the shell
-mvn spring-boot:run
-```
-
-Data persists between restarts (Docker volume `pgdata`). To start over with fresh seed data:
-`docker compose down -v`.
-
-## Configuration
-
-| Env var | Default |
+| Test | Covers |
 |---|---|
-| `DB_URL` | `jdbc:postgresql://localhost:5432/scheduler` |
-| `DB_USERNAME` | `scheduler` |
-| `DB_PASSWORD` | _none: set it in `.env`_ |
-| `PORT` | `8080` |
+| `AgentBookingToolsTest` | **The agent's book tool goes through the transactional path:** a slot taken while the user reads the summary → refused with alternatives, still exactly one booking; two agents confirming the same slot at once → exactly one wins (5 rounds); a double-clicked Confirm books once; no write in the proposing turn; cannot cancel another user's appointment |
+| `AiFeaturesIntegrationTest` | Reminder agent (LLM prompt contains the appointment and the RAG tips, queued once, scheduled + manual run at the same time → one reminder, appointment cancelled while the LLM writes → nothing sent, LLM failure retried later, stored in the outbox during an outage), admin-only trigger, RAG answer with sources, chat memory persisted per user, per-user AI rate limit |
+| `SecurityExposureTest` | The M3 "public endpoint" finding applied to the whole API: 17 endpoints reject anonymous callers, a 9-case role matrix returns 403, metrics/env not public, expired / foreign-key / forged tokens rejected, role changes and deleted accounts take effect immediately, no cross-customer data, no stack traces |
+| `FallbackChatModelTest` | Gemini overloaded → fallback models in order; circuit breaker skips the failing primary |
+| `ConcurrentBookingTest` | Two threads book one slot; exactly one succeeds |
+| `NotificationIntegrationTest` | Real HTTP to the mock: one message per book/cancel, **in order after an outage**, **delivered after a simulated crash**, timeout without duplicate, **mock rejects calls without the API key** |
+| `NotificationDownIntegrationTest` | Booking/cancel succeed with the service down; `/health` DEGRADED |
+| `NotificationRelayTest`, `NotificationSenderTest` | Ordering, backoff, give-up rules (unit) |
+| `AuthIntegrationTest` | JWT login, forged token → 401, 401 vs 403 per role, no session cookie, CORS, AI 503 without key |
+| `BookingFlowIntegrationTest`, `ApiIntegrationTest` | Book, 409, cancel, provider slots, browse/filter/paginate over HTTP |
+| `BookingServiceTest`, `AppointmentServiceTest`, `ProviderSlotServiceTest`, `SlotServiceTest` | Service rules (unit) |
 
-Seeded accounts (password `password123`, stored as BCrypt): providers `alice.mentor`, `raj.mentor`,
-`maria.mentor`; customers `sam.dev`, `jordan.dev`.
+CI ([Actions](https://github.com/c-banh-mi/cmpe172-interview-scheduler/actions)) runs the backend tests, builds the
+frontend (TypeScript strict) and builds both Docker images on every push.
 
-## Test
+## Known limitations
 
-```bash
-mvn test        # needs Docker running (Testcontainers starts PostgreSQL)
+- The vector store is in memory: the handbook is re-embedded on every start (a few seconds, 17 embedding
+  calls). Chroma/pgvector would persist it.
+- A pending (unconfirmed) agent action is held in memory for 15 minutes; after a restart the user just asks again.
+- Logout is client-side: a JWT stays valid until it expires (2 h). A deny-list or short-lived tokens with refresh
+  would close this.
+- The JWT is kept in `sessionStorage`, which an XSS bug could read. An HttpOnly cookie would be safer but brings CSRF
+  back.
+- One relay at a time per JVM keeps notifications in order; with several app instances, a database advisory lock
+  would be needed.
+- The notification service is a mock that stores messages in memory; no real email is sent.
+- Gemini free-tier capacity varies: when every configured model is overloaded, AI endpoints answer 503 (the rest of
+  the app is unaffected) and the reminder agent retries in the next run. A 30-60 s answer is possible while the
+  primary model is timing out.
+- The AI rate limit is per JVM, in memory.
+
+## Repository layout
+
+```
+src/main/java/edu/sjsu/cmpe172/scheduler/
+  controller/  service/  repository/  model/  dto/  exception/   layered core
+  security/      JWT issue/verify, RBAC
+  notification/  outbox, relay, sender, gateway       mocknotify/  the mock notification service
+  ai/agent/      Agent 1 (tools, sessions)            ai/reminder/ Agent 2
+  ai/knowledge/  RAG knowledge base + Q&A
+src/main/resources/  schema.sql, seed.sql, application.yml, knowledge/mockprep-handbook.md
+frontend/            Next.js app (app/ pages, lib/api.ts, lib/auth.tsx)
+docs/                reports, diagrams, schema notes, wireframes
 ```
 
-Without Docker, point the integration tests at any PostgreSQL you already run (its tables are emptied before
-every test, so use a throwaway database):
-```bash
-mvn test -Dspring.profiles.active=localdb   # default: localhost:5433/scheduler_test, user/password scheduler_test
-# override with TEST_DB_URL, TEST_DB_USERNAME, TEST_DB_PASSWORD
-```
-
-| Test | What it covers |
-|---|---|
-| `BookingServiceTest` | Booking rules, retry after a version conflict, role check (unit, mocks) |
-| `AppointmentServiceTest` | Owner-only cancel, already-cancelled/started, upcoming vs history (unit) |
-| `ProviderSlotServiceTest` | Slot length, overlap, ownership, booked slots can't be removed (unit) |
-| `SlotServiceTest` | Paging math (unit) |
-| `ConcurrentBookingTest` | **Two threads book the same slot; exactly one succeeds** (real PostgreSQL) |
-| `BookingFlowIntegrationTest` | Book, 409, cancel, provider slots, COMPLETED, over HTTP |
-| `AuthIntegrationTest` | Login/logout, BCrypt, 401 vs 403, CSRF |
-| `ApiIntegrationTest` | Public browse/filter/paginate endpoints |
-
-## Try it
-
-Open http://localhost:8080, click **Browse Slots → Book**, and log in as `sam.dev` / `password123`.
-Log in as `alice.mentor` to add or remove slots.
-
-From the command line (the cookie jar holds the session and the CSRF cookie):
-```bash
-curl http://localhost:8080/api/home
-curl "http://localhost:8080/api/slots?page=0&size=5"
-curl "http://localhost:8080/api/slots?serviceId=1&date=$(date -d tomorrow +%F)"
-
-curl -s -c jar -b jar http://localhost:8080/api/auth/me                    # get the XSRF-TOKEN cookie
-xsrf() { awk '/XSRF-TOKEN/ {print $7}' jar; }
-curl -s -c jar -b jar -H "X-XSRF-TOKEN: $(xsrf)" \
-     -d username=sam.dev -d password=password123 http://localhost:8080/api/auth/login
-curl -s -c jar -b jar -H "X-XSRF-TOKEN: $(xsrf)" -H 'Content-Type: application/json' \
-     -d '{"slotId": 1, "serviceId": 2, "notes": "backend roles"}' http://localhost:8080/api/customer/appointments
-curl -s -b jar "http://localhost:8080/api/customer/appointments?scope=upcoming"
-```
-
-## Code walkthrough video
-
-- Milestone 1: https://drive.google.com/file/d/1bjLsSmwjBthYJkkrbdtsvMnHgxPHTZpi/view?usp=sharing
-- Milestone 2: https://drive.google.com/file/d/10eYO288ZeQLtlxiJdYc3K5R9Ii3TWqV-/view?usp=sharing
-- Milestone 3: https://drive.google.com/file/d/1OmLJ7df6l5PLxmGjS5zRz7_moh1DLNOu/view?usp=sharing
+Design decisions per milestone: [`DECISIONS.md`](DECISIONS.md).

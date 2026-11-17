@@ -23,6 +23,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
  * Shared setup for tests that run the whole app against a real PostgreSQL.
  * Every test starts from exactly the seed data, so tests cannot affect each other.
  * Notifications are off here; the Notification*IntegrationTest classes turn them on.
+ * GEMINI_API_KEY is not set in tests, so the real Gemini beans are off (AiTestConfig adds stubs).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -44,8 +45,11 @@ abstract class IntegrationTestBase {
 
     @BeforeEach
     void resetDatabase() {
-        jdbc.sql("TRUNCATE appointments, availability_slots, services, providers, users RESTART IDENTITY CASCADE")
-                .update();
+        // CASCADE also empties notification_outbox (it references appointments).
+        jdbc.sql("""
+                TRUNCATE appointments, availability_slots, services, providers, users, spring_ai_chat_memory
+                RESTART IDENTITY CASCADE
+                """).update();
         new ResourceDatabasePopulator(new ClassPathResource("seed.sql")).execute(dataSource);
     }
 

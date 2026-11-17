@@ -1,3 +1,69 @@
+# Milestone 4: decisions log
+
+### Where things are
+| Requirement | Code |
+|---|---|
+| Agent 1 chat endpoint (ChatClient + tools) | `controller/AssistantController.chat`, `ai/agent/BookingAgent.chat` |
+| Tools wrapping the service layer | `ai/agent/BookingAgentTools` (`@Tool` methods) |
+| Writes through the transactional service | `BookingAgentTools.book` → `BookingService.book`; `.cancel` → `AppointmentService.cancel` |
+| Confirm-before-write | `proposeBooking` / `proposeCancellation` store a `PendingAction`; `confirmPendingAction` checks `proposedInTurn < turn` |
+| Multi-step + alternatives + multi-turn | tool loop in Spring AI; `alternativesFor`; `MessageChatMemoryAdvisor` + JDBC chat memory |
+| Agent 2 (scheduled, LLM, outbound action) | `ai/reminder/ReminderAgent` (`@Scheduled` cron, `writeReminder`, outbox insert) |
+| Manual trigger | `AdminController.runReminderAgent` (`POST /api/admin/agents/reminders/run`) |
+| Knowledge source + vector store + RAG | `knowledge/mockprep-handbook.md`, `ai/knowledge/KnowledgeBase`, `PolicyQaService` (`QuestionAnswerAdvisor`) |
+| Required test | `AgentBookingToolsTest.doubleBookingIsBlockedWhenTheAgentBooks`, `twoAgentsConfirmingTheSameSlotAtOnceBookItExactlyOnce` |
+| API key handling | `application.yml` (`spring.ai.google.genai.api-key: ${GEMINI_API_KEY:}` only), `RuntimeDefaultsEnvironmentPostProcessor` |
+| Bonus: persistent conversation memory | `spring_ai_chat_memory` in `schema.sql`, `BookingAgent.history` |
+| M3 finding 1: public notification endpoints | `mocknotify/MockNotifyApiKeyFilter`, `RestNotificationGateway` (`X-Api-Key`) |
+| M3 finding 2: lost / out-of-order notifications | `notification_outbox` (`schema.sql`), `NotificationOutbox`, `NotificationRelay` |
+| JWT | `security/JwtService`, `JwtUserConverter`, `SecurityConfig`, `AuthController.login` |
+| Next.js frontend | `frontend/` (`lib/api.ts`, `lib/auth.tsx`, `app/*/page.tsx`) |
+
+### Decisions
+1. **Spring AI 1.1.8 with the Google GenAI starter, API-key mode.** Spring AI 2.x needs Spring Boot 4; 1.1 is the
+   line for Boot 3.5. Only `api-key` is set; `project-id`/`location` would switch to Vertex AI.
+2. **App starts without a key.** An `EnvironmentPostProcessor` switches the Gemini auto-configuration off when
+   `GEMINI_API_KEY` is blank (the embedding connection auto-config otherwise fails startup). AI endpoints answer 503.
+   CI and tests therefore never call Gemini; `AiTestConfig` provides a stub chat model and a bag-of-words embedding.
+3. **Tools are a new object per request, bound to the user.** No tool takes a user id, so a prompt cannot make the
+   agent act for someone else. The REST endpoint is CUSTOMER-only, and the services check ownership again.
+4. **Confirm-before-write is a code rule, not only a prompt rule.** The pending action lives on the server (the
+   model cannot change what gets booked after the user saw the summary), and it can be confirmed only in a later
+   turn than the one that proposed it. The prompt also says so, but the guard holds even if the model ignores it.
+5. **Tool results use pre-formatted Pacific-time strings** ("Tue Nov 18, 10:00 AM - 11:00 AM PT") so the model
+   does not convert times itself.
+6. **Agent 2 claims and enqueues in one transaction** (`reminder_sent_at` conditional update + outbox insert). Each
+   appointment gets at most one reminder; a cancelled one is skipped; an LLM failure leaves it for the next run.
+   The LLM call happens before the transaction, so no database transaction waits on Gemini.
+7. **Agent 2 uses RAG too:** the reminder prompt contains the handbook's preparation section for that service.
+8. **SimpleVectorStore, one chunk per `##` section.** The handbook is small (17 sections); one section = one topic
+   gives clean "sources". Embedded once at startup in the background, lazily retried on first use if that failed.
+9. **Transactional outbox replaces "notify after commit + park on failure".** The M3 design lost a notification if
+   the JVM died between commit and send, and used one async thread per event, so a quick cancel could overtake its
+   confirmation. Now the row commits with the booking, and one relay sends rows in id order, holding later rows of an
+   appointment behind an earlier unsent one. An `AFTER_COMMIT` event triggers the relay immediately; a 5 s poll is
+   the safety net.
+10. **The mock notification service checks an API key** (constant-time compare) on every endpoint, including reading
+    messages and the admin mode switch. It is a separate system, so it does not trust scheduler logins.
+11. **JWT instead of the HTTP session.** HS256 with a server secret from the environment; Spring's OAuth2 resource
+    server verifies tokens. The user row is reloaded per request so role changes and deletions apply at once.
+    Stateless, no cookies, so CSRF is off. Token in `sessionStorage` on the client (trade-off in README limitations).
+12. **Next.js forwards `/api/*` to Spring Boot** (rewrites), so the browser sees one origin. CORS is still configured
+    for a separately hosted frontend (e.g. Vercel + Render).
+13. **Gemini as an unreliable external service.** Spring AI's default retry (10 attempts, 2 s x5 backoff) plus the
+    SDK's own retries made one overloaded call take 251 s. Now: our own SDK `Client` bean (20 s timeout, SDK retries
+    off), `spring.ai.retry.max-attempts: 2`, then `FallbackChatModel` tries lighter models with a 60 s circuit
+    breaker. Default model `gemini-3.5-flash-lite` (measured 5/5 OK in about 1 s; `gemini-3.8-flash` 0/5 that night).
+    Next.js proxy timeout raised to 120 s for agent turns.
+14. **Review of the M4 code for the same classes of bug as the M3 findings** (exposure, loss/duplication):
+    confirm made atomic (double-clicked Confirm), re-proposing the same slot keeps the user's confirmation,
+    per-user AI rate limit (quota exhaustion = service disruption), `/actuator/metrics` ADMIN-only.
+    Covered by `SecurityExposureTest` and new cases in `AgentBookingToolsTest` / `AiFeaturesIntegrationTest`.
+15. **ADMIN role added** (operator account `admin`) to run the agent on demand and view the outbox; the final
+    project asks for customer and provider/admin roles.
+
+---
+
 # Milestone 3: decisions log
 
 ### Where things are (for your report and video)

@@ -37,6 +37,6 @@ public class CatalogService {
 
     public HomeResponse home() {
         long openSlots = slots.countOpen(new SlotFilter(null, null, null));
-        return new HomeResponse("Interview Scheduler", openSlots, listServices(), listProviders());
+        return new HomeResponse("MockPrep", openSlots, listServices(), listProviders());
     }
 }

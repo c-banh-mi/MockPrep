@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  build:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +15,7 @@ jobs:
           java-version: '21'
           cache: maven
       # Integration tests start PostgreSQL via Testcontainers (Docker is preinstalled on ubuntu-latest).
+      # No GEMINI_API_KEY in CI: AI tests use stand-in models (AiTestConfig), never the real API.
       - name: Build and test
         run: mvn -B verify
       - name: Upload test reports
@@ -25,4 +26,22 @@ jobs:
           path: target/surefire-reports/
       # Proves the Dockerfile still builds (the image is not pushed anywhere).
       - name: Build Docker image
-        run: docker build -t interview-scheduler:ci .
+        run: docker build -t mockprep-api:ci .
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # next build type-checks every page (TypeScript strict) and fails on errors.
+      - run: npm run build
+      - name: Build Docker image
+        run: docker build -t mockprep-web:ci .
