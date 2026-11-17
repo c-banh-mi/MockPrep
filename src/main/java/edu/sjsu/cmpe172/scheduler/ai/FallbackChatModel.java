@@ -46,7 +46,8 @@ public class FallbackChatModel implements ChatModel {
             return delegate.call(prompt);
         }
         RuntimeException last = null;
-        if (!clock.instant().isBefore(primaryBlockedUntil)) {
+        boolean circuitOpen = clock.instant().isBefore(primaryBlockedUntil);
+        if (!circuitOpen) {
             try {
                 return delegate.call(prompt);
             } catch (RuntimeException e) {
@@ -62,6 +63,16 @@ public class FallbackChatModel implements ChatModel {
             } catch (RuntimeException e) {
                 last = e;
                 log.warn("Fallback model {} failed: {}", model, shorten(e.getMessage()));
+            }
+        }
+        if (circuitOpen) {
+            // Every fallback failed while the primary was being skipped: it may have recovered.
+            try {
+                ChatResponse response = delegate.call(prompt);
+                primaryBlockedUntil = Instant.MIN;
+                return response;
+            } catch (RuntimeException e) {
+                last = e;
             }
         }
         throw last;

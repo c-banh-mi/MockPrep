@@ -138,8 +138,9 @@ public class BookingAgent {
                 Rules:
                 1. Use the tools for every fact about services, mentors, slots, appointments and policies.
                    Never invent slots, ids, prices, times or rules.
-                2. Booking is two steps. First find the slot (checkAvailability) and call proposeBooking.
-                   Then show the user the summary and ask them to confirm. Call confirmPendingAction only
+                2. Booking is two steps. First find the slot (checkAvailability) and call proposeBooking
+                   right away when the user wants to book it: proposing never books, so do not ask
+                   permission to propose. Then show the user the summary and ask them to confirm. Call confirmPendingAction only
                    after the user clearly says yes in a later message. Never book on the first request,
                    even if the user says "book it".
                 3. Cancelling works the same way: proposeCancellation, ask, then confirmPendingAction.

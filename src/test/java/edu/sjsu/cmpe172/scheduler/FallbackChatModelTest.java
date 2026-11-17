@@ -76,6 +76,19 @@ class FallbackChatModelTest {
     }
 
     @Test
+    void whileSkippingThePrimaryItIsStillTheLastResort() {
+        FakeGemini gemini = new FakeGemini(new java.util.HashSet<>(Set.of("primary", "lite-a", "lite-b")));
+        FallbackChatModel model = new FallbackChatModel(gemini, "lite-a,lite-b", Duration.ofSeconds(60), clock);
+        assertThrows(IllegalStateException.class, () -> model.call(prompt()));   // opens the circuit
+
+        // The primary recovers, but both fallbacks are still down: the primary is tried last.
+        gemini.down.remove("primary");
+        gemini.called.clear();
+        assertThat(text(model.call(prompt()))).isEqualTo("answer from primary");
+        assertThat(gemini.called).containsExactly("lite-a", "lite-b", "primary");
+    }
+
+    @Test
     void everythingDownSurfacesTheError() {
         FakeGemini gemini = new FakeGemini(Set.of("primary", "lite-a", "lite-b"));
         FallbackChatModel model = new FallbackChatModel(gemini, "lite-a,lite-b", Duration.ofSeconds(60), clock);

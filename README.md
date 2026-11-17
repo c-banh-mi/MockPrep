@@ -211,7 +211,7 @@ curl -s -X POST localhost:8080/api/assistant/chat -H "Authorization: Bearer $TOK
 
 ## Tests
 
-`mvn -B verify` runs 143 tests against a real PostgreSQL (Testcontainers). Without Docker:
+`mvn -B verify` runs 144 tests against a real PostgreSQL (Testcontainers). Without Docker:
 `mvn test -Dspring.profiles.active=localdb` against a throwaway local database.
 
 | Test | Covers |
