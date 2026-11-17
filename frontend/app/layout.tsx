@@ -7,6 +7,7 @@ import { AuthProvider } from "@/lib/auth";
 export const metadata: Metadata = {
   title: "MockPrep",
   description: "Book mock interviews and resume reviews with experienced engineers, with an AI booking assistant.",
+  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
