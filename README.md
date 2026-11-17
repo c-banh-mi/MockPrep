@@ -65,7 +65,7 @@ flowchart LR
 **Layers:** Controller → Service → Repository (JDBC) → PostgreSQL. Controllers return DTOs, never rows. Agents are
 another client of the service layer, not a shortcut around it.
 
-Design docs: [architecture](docs/architecture-diagram.png) · [notification boundary + outbox](docs/distribution-diagram.png) ·
+Design docs: [architecture](docs/architecture-diagram.png) · [agent turn sequence](docs/agent-sequence.png) · [notification boundary + outbox](docs/distribution-diagram.png) ·
 [ER diagram](docs/er-diagram.png) · [relational schema](docs/relational-schema.md) ·
 [booking sequence](docs/booking-sequence.png) · [block diagram](docs/block-diagram.png) ·
 [wireframes](docs/wireframes.pdf) (Mermaid sources next to each PNG)

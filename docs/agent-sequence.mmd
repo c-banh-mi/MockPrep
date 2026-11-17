@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    actor U as Customer (Next.js chat)
+    participant C as AssistantController<br/>JWT user, rate limit
+    participant A as BookingAgent<br/>ChatClient + memory
+    participant G as Gemini API
+    participant T as BookingAgentTools<br/>(bound to this user)
+    participant S as BookingService / SlotBooker<br/>@Transactional
+    participant DB as PostgreSQL
+
+    Note over U,DB: Turn 1: "Find the earliest mock coding interview this week and book it"
+    U->>C: POST /api/assistant/chat
+    C->>A: chat(user, conversationId, message)
+    A->>G: system prompt + history + message + tool definitions
+    G-->>A: call checkAvailability(fromDate, toDate, serviceId)
+    A->>T: checkAvailability(...)
+    T->>DB: SELECT open slots (via SlotService)
+    T-->>A: slots, earliest first
+    A->>G: tool result
+    G-->>A: call proposeBooking(slotId)
+    A->>T: proposeBooking(slotId)
+    T->>T: store PendingAction(slot, turn 1). NOT booked
+    A->>G: tool result "PENDING_CONFIRMATION"
+    G-->>A: "Mock Coding Interview with Alice, Wed 10:00 AM. Confirm?"
+    A-->>U: reply + pendingAction (Confirm / No buttons)
+
+    Note over U,DB: Turn 2: "Yes"
+    U->>C: POST /api/assistant/chat
+    C->>A: chat(...)
+    A->>G: history + "Yes"
+    G-->>A: call confirmPendingAction()
+    A->>T: confirmPendingAction()
+    T->>T: proposed in turn 1 < turn 2, so allowed (atomic take)
+    T->>S: book(user, slotId, serviceId)
+    S->>DB: UPDATE slot ... WHERE version = ? AND status = 'OPEN'<br/>INSERT appointment + outbox row (one transaction)
+    alt slot still open
+        S-->>T: appointment
+        T-->>A: DONE
+        A->>G: tool result
+        G-->>A: "Booked!"
+        A-->>U: reply + actionsTaken
+    else someone booked it first
+        S-->>T: SlotUnavailableException (409 path)
+        T-->>A: UNAVAILABLE + 3 alternatives
+        A-->>U: "That slot was just taken. Alternatives: ..."
+    end
