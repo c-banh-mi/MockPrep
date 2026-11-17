@@ -228,7 +228,7 @@ curl -s -X POST localhost:8080/api/assistant/chat -H "Authorization: Bearer $TOK
 | `BookingFlowIntegrationTest`, `ApiIntegrationTest` | Book, 409, cancel, provider slots, browse/filter/paginate over HTTP |
 | `BookingServiceTest`, `AppointmentServiceTest`, `ProviderSlotServiceTest`, `SlotServiceTest` | Service rules (unit) |
 
-CI ([Actions](https://github.com/c-banh-mi/cmpe172-interview-scheduler/actions)) runs the backend tests, builds the
+CI ([Actions](https://github.com/c-banh-mi/MockPrep/actions)) runs the backend tests, builds the
 frontend (TypeScript strict) and builds both Docker images on every push.
 
 ## Known limitations
