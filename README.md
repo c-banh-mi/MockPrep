@@ -33,7 +33,7 @@ the tests use stand-in models, so CI never calls the real API.
 | **M1** Foundations | Layered Spring Boot skeleton, PostgreSQL schema with a double-booking guard, ER and block diagrams, wireframes, Docker, CI | [PDF](docs/CMPE172_Milestone1_Report.pdf) | [video](https://drive.google.com/file/d/1bjLsSmwjBthYJkkrbdtsvMnHgxPHTZpi/view?usp=sharing) |
 | **M2** Booking core | Login + role-based access, browse/book/cancel, provider slots, optimistic locking with a retry loop, concurrency test (two threads, one slot) | [PDF](docs/CMPE172_Milestone2_Report.pdf) | [video](https://drive.google.com/file/d/10eYO288ZeQLtlxiJdYc3K5R9Ii3TWqV-/view?usp=sharing) |
 | **M3** Distribution & operations | Notification service boundary (gateway, timeout, retry, fallback, idempotency), `/health`, metrics, logging, Docker health check, CI | [PDF](docs/CMPE172_Milestone3_Report.pdf) | [video](https://drive.google.com/file/d/1OmLJ7df6l5PLxmGjS5zRz7_moh1DLNOu/view?usp=sharing) |
-| **M4** Enterprise AI | Two Gemini agents, RAG Q&A, JWT auth, Next.js frontend, transactional outbox (fixes the two M3 review findings), mock-service API key | _added at submission_ | _added at submission_ |
+| **M4** Enterprise AI | Two Gemini agents, RAG Q&A, JWT auth, Next.js frontend, transactional outbox (fixes the two M3 review findings), mock-service API key | [PDF](docs/CMPE172_Milestone4_Report.pdf) | [video](https://youtu.be/mxX4EAlQFxE) |
 
 ## Architecture
 
