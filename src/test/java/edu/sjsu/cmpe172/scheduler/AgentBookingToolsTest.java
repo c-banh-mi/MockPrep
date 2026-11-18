@@ -219,6 +219,25 @@ class AgentBookingToolsTest extends IntegrationTestBase {
     }
 
     @Test
+    void reProposingASlotTakenMeanwhileDropsThePendingBooking() {
+        long slotId = openSlotId("alice.mentor", "Mock Coding Interview");
+        String convo = newConversation();
+        assertThat(agent.startTurn(account("sam.dev"), convo).proposeBooking(slotId, null).status())
+                .isEqualTo("PENDING_CONFIRMATION");
+        bookingService.book(account("jordan.dev"), new BookingRequest(slotId, serviceIdOfSlot(slotId), null));
+
+        // Sam says yes, but the model re-proposes the slot instead of confirming: it is gone now.
+        ToolResult again = agent.startTurn(account("sam.dev"), convo).proposeBooking(slotId, null);
+
+        assertThat(again.status()).isEqualTo("UNAVAILABLE");
+        assertThat(again.alternatives()).isNotEmpty();
+        // No stale proposal is left for a Confirm button.
+        assertThat(agent.startTurn(account("sam.dev"), convo).confirmPendingAction().status())
+                .isEqualTo("NOTHING_PENDING");
+        assertThat(activeBookings(slotId)).isEqualTo(1);
+    }
+
+    @Test
     void proposingATakenSlotOffersAlternatives() {
         long bookedSlot = jdbc.sql("SELECT slot_id FROM appointments WHERE id = 1").query(Long.class).single();
 

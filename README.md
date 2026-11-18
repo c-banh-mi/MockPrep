@@ -211,12 +211,12 @@ curl -s -X POST localhost:8080/api/assistant/chat -H "Authorization: Bearer $TOK
 
 ## Tests
 
-`mvn -B verify` runs 144 tests against a real PostgreSQL (Testcontainers). Without Docker:
+`mvn -B verify` runs 145 tests against a real PostgreSQL (Testcontainers). Without Docker:
 `mvn test -Dspring.profiles.active=localdb` against a throwaway local database.
 
 | Test | Covers |
 |---|---|
-| `AgentBookingToolsTest` | **The agent's book tool goes through the transactional path:** a slot taken while the user reads the summary → refused with alternatives, still exactly one booking; two agents confirming the same slot at once → exactly one wins (5 rounds); a double-clicked Confirm books once; no write in the proposing turn; cannot cancel another user's appointment |
+| `AgentBookingToolsTest` | **The agent's book tool goes through the transactional path:** a slot taken while the user reads the summary → refused with alternatives, still exactly one booking; a slot taken before the user confirms leaves no stale Confirm offer; two agents confirming the same slot at once → exactly one wins (5 rounds); a double-clicked Confirm books once; no write in the proposing turn; cannot cancel another user's appointment |
 | `AiFeaturesIntegrationTest` | Reminder agent (LLM prompt contains the appointment and the RAG tips, queued once, scheduled + manual run at the same time → one reminder, appointment cancelled while the LLM writes → nothing sent, LLM failure retried later, stored in the outbox during an outage), admin-only trigger, RAG answer with sources, chat memory persisted per user, per-user AI rate limit |
 | `SecurityExposureTest` | The M3 "public endpoint" finding applied to the whole API: 17 endpoints reject anonymous callers, a 9-case role matrix returns 403, metrics/env not public, expired / foreign-key / forged tokens rejected, role changes and deleted accounts take effect immediately, no cross-customer data, no stack traces |
 | `FallbackChatModelTest` | Gemini overloaded → fallback models in order; circuit breaker skips the failing primary |

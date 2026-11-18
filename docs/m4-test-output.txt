@@ -1,21 +1,21 @@
-MockPrep Milestone 4 test run: mvn -B verify (Testcontainers PostgreSQL 16), 2026-11-17 03:15 PST
+MockPrep Milestone 4 test run: mvn -B verify (Testcontainers PostgreSQL 16), 2026-11-17 20:38 PST
 
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.865 s  SlotServiceTest
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.09 s  NotificationIntegrationTest
-Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.099 s  NotificationSenderTest
-Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.651 s  AiFeaturesIntegrationTest
-Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.127 s  AppointmentServiceTest
-Tests run: 32, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.589 s  SecurityExposureTest
-Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s  FallbackChatModelTest
-Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.785 s  AgentBookingToolsTest
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.627 s  NotificationDownIntegrationTest
-Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.080 s  NotificationRelayTest
-Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.450 s  BookingFlowIntegrationTest
-Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.050 s  AuthIntegrationTest
-Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.691 s  ConcurrentBookingTest
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.231 s  ApiIntegrationTest
-Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.153 s  BookingServiceTest
-Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.076 s  ProviderSlotServiceTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.008 s  SlotServiceTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 11.95 s  NotificationIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.128 s  NotificationSenderTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.909 s  AiFeaturesIntegrationTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.150 s  AppointmentServiceTest
+Tests run: 32, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.583 s  SecurityExposureTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s  FallbackChatModelTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.079 s  AgentBookingToolsTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.229 s  NotificationDownIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.129 s  NotificationRelayTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.558 s  BookingFlowIntegrationTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.305 s  AuthIntegrationTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.878 s  ConcurrentBookingTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.293 s  ApiIntegrationTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.159 s  BookingServiceTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.087 s  ProviderSlotServiceTest
 
-Tests run: 144, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 145, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS

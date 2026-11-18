@@ -173,6 +173,11 @@ public class BookingAgentTools {
         try {
             slot = slots.findOpenSlot(slotId);
         } catch (NotFoundException e) {
+            PendingAction stale = session.pending();
+            if (stale != null && stale.type() == PendingAction.Type.BOOK && stale.slotId() == slotId) {
+                // The slot was taken after it was proposed: drop the proposal so no Confirm button offers it.
+                session.setPending(null);
+            }
             return new ToolResult("UNAVAILABLE", "Slot " + slotId + " is not available (booked, removed or past).",
                     alternativesFor(null));
         }
